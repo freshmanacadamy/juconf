@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Ideas collection - read/write for all (bot handles auth)
+    match /ideas/{idea} {
+      allow read, write: if true;
+    }
+    
+    // Comments collection - read/write for all
+    match /comments/{comment} {
+      allow read, write: if true;
+    }
+    
+    // Optional: Add more restrictive rules for production
+    match /{document=**} {
+      allow read, write: if 
+        request.time < timestamp.date(2025, 12, 31);
+    }
+  }
+}
