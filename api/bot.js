@@ -1,4 +1,4 @@
-// api/bot.js - Community Idea Bot with Numbering & Notifications
+// api/bot.js - Enhanced Community Idea Bot
 require('dotenv').config();
 const { Telegraf, Markup, session } = require('telegraf');
 const admin = require('firebase-admin');
@@ -33,7 +33,6 @@ async function initializeIdeaCounter() {
     if (!ideasSnapshot.empty) {
       const latestIdea = ideasSnapshot.docs[0].data();
       ideaCounter = latestIdea.ideaNumber || 0;
-      console.log(`Initialized idea counter: ${ideaCounter}`);
     }
   } catch (error) {
     console.error('Error initializing idea counter:', error);
@@ -47,44 +46,206 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
-// ==================== IDEA SUBMISSION ====================
-bot.command('submit', async (ctx) => {
-  await ctx.reply(
-    '💡 *Share Your Idea!*\n\nPlease write your idea below. It will be reviewed by admin before posting.',
-    { parse_mode: 'Markdown' }
-  );
-  ctx.session.waitingForIdea = true;
-});
-
+// ==================== ENHANCED START COMMAND WITH INLINE BUTTONS ====================
 bot.command('start', async (ctx) => {
-  await ctx.replyWithMarkdown(
-    `🌟 *Community Ideas Bot*\n\n` +
-    `Share your ideas with the community! Here's what you can do:\n\n` +
-    `💡 /submit - Share a new idea\n` +
-    `📋 /ideas - View recent ideas\n` +
-    `🆘 /help - Get help\n\n` +
-    `Ideas are reviewed by admin before appearing in the community channel.`
-  );
+  const welcomeText = `🌟 *Community Ideas Bot*\n\nShare your ideas with the community and discuss them with others!`;
+  
+  const keyboard = Markup.inlineKeyboard([
+    [
+      Markup.button.callback('💡 Submit Idea', 'submit_idea'),
+      Markup.button.callback('📋 View Ideas', 'view_ideas')
+    ],
+    [
+      Markup.button.callback('🆘 Help', 'show_help'),
+      Markup.button.callback('📊 Stats', 'show_stats')
+    ]
+  ]);
+
+  await ctx.replyWithMarkdown(welcomeText, keyboard);
 });
 
+// ==================== ENHANCED HELP COMMAND ====================
 bot.command('help', async (ctx) => {
-  await ctx.replyWithMarkdown(
-    `🆘 *Community Ideas Bot Help*\n\n` +
-    `*Commands:*\n` +
+  await showHelp(ctx);
+});
+
+async function showHelp(ctx) {
+  const helpText = `🆘 *Community Ideas Bot Help*\n\n` +
+    `*Available Commands:*\n` +
     `💡 /submit - Submit a new idea for review\n` +
     `📋 /ideas - Browse recent approved ideas\n` +
     `🆘 /help - Show this help message\n\n` +
     `*How it works:*\n` +
-    `1. Submit your idea using /submit\n` +
+    `1. Submit your idea\n` +
     `2. Admin reviews and approves\n` +
-    `3. Idea gets posted to community channel with number (#1, #2, etc.)\n` +
-    `4. Community members can comment on ideas\n` +
+    `3. Idea gets posted to community channel\n` +
+    `4. Community members can comment\n` +
     `5. Get notified when someone comments on your idea\n\n` +
-    `💬 Comments are anonymous to other members.`
-  );
+    `💬 Comments are anonymous to other members.`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [
+      Markup.button.callback('💡 Submit Idea', 'submit_idea'),
+      Markup.button.callback('📋 View Ideas', 'view_ideas')
+    ],
+    [
+      Markup.button.callback('🔙 Main Menu', 'main_menu')
+    ]
+  ]);
+
+  if (ctx.updateType === 'callback_query') {
+    await ctx.editMessageText(helpText, { 
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup 
+    });
+  } else {
+    await ctx.replyWithMarkdown(helpText, keyboard);
+  }
+}
+
+// ==================== ENHANCED SUBMIT COMMAND ====================
+bot.command('submit', async (ctx) => {
+  await startIdeaSubmission(ctx);
 });
 
-// Handle idea text submission
+async function startIdeaSubmission(ctx) {
+  await ctx.replyWithMarkdown(
+    '💡 *Share Your Idea!*\n\nPlease write your idea below. It will be reviewed by admin before posting.'
+  );
+  ctx.session.waitingForIdea = true;
+}
+
+// ==================== ENHANCED IDEAS COMMAND ====================
+bot.command('ideas', async (ctx) => {
+  await showRecentIdeas(ctx);
+});
+
+async function showRecentIdeas(ctx) {
+  try {
+    const ideasSnapshot = await db.collection('ideas')
+      .where('status', '==', 'approved')
+      .orderBy('ideaNumber', 'desc')
+      .limit(10)
+      .get();
+
+    if (ideasSnapshot.empty) {
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('💡 Submit First Idea', 'submit_idea')],
+        [Markup.button.callback('🔙 Main Menu', 'main_menu')]
+      ]);
+      
+      if (ctx.updateType === 'callback_query') {
+        await ctx.editMessageText(
+          '📝 No ideas have been posted yet. Be the first to submit one!', 
+          { reply_markup: keyboard.reply_markup }
+        );
+      } else {
+        await ctx.reply('📝 No ideas have been posted yet. Be the first to submit one!', keyboard);
+      }
+      return;
+    }
+
+    let ideasText = `📋 *Recent Community Ideas*\n\n`;
+    
+    ideasSnapshot.forEach((doc) => {
+      const idea = doc.data();
+      ideasText += `*#${idea.ideaNumber}* - 💬 ${idea.commentCount || 0} comments\n`;
+      ideasText += `${idea.text}\n\n`;
+    });
+
+    ideasText += `💡 *Use the buttons below to interact*`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('💡 Submit Idea', 'submit_idea'),
+        Markup.button.callback('🔄 Refresh', 'view_ideas')
+      ],
+      [
+        Markup.button.callback('🔙 Main Menu', 'main_menu')
+      ]
+    ]);
+
+    if (ctx.updateType === 'callback_query') {
+      await ctx.editMessageText(ideasText, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup 
+      });
+    } else {
+      await ctx.replyWithMarkdown(ideasText, keyboard);
+    }
+
+  } catch (error) {
+    console.error('Error fetching ideas:', error);
+    await ctx.reply('❌ Error loading ideas. Please try again.');
+  }
+}
+
+// ==================== INLINE BUTTON HANDLERS ====================
+bot.action('main_menu', async (ctx) => {
+  const welcomeText = `🌟 *Community Ideas Bot*\n\nShare your ideas with the community and discuss them with others!`;
+  
+  const keyboard = Markup.inlineKeyboard([
+    [
+      Markup.button.callback('💡 Submit Idea', 'submit_idea'),
+      Markup.button.callback('📋 View Ideas', 'view_ideas')
+    ],
+    [
+      Markup.button.callback('🆘 Help', 'show_help'),
+      Markup.button.callback('📊 Stats', 'show_stats')
+    ]
+  ]);
+
+  await ctx.editMessageText(welcomeText, { 
+    parse_mode: 'Markdown',
+    reply_markup: keyboard.reply_markup 
+  });
+});
+
+bot.action('submit_idea', async (ctx) => {
+  await startIdeaSubmission(ctx);
+  await ctx.answerCbQuery();
+});
+
+bot.action('view_ideas', async (ctx) => {
+  await showRecentIdeas(ctx);
+});
+
+bot.action('show_help', async (ctx) => {
+  await showHelp(ctx);
+});
+
+bot.action('show_stats', async (ctx) => {
+  try {
+    const totalIdeas = await db.collection('ideas').where('status', '==', 'approved').get();
+    const totalComments = await db.collection('comments').get();
+    
+    const statsText = `📊 *Community Statistics*\n\n` +
+      `💡 Total Ideas: ${totalIdeas.size}\n` +
+      `💬 Total Comments: ${totalComments.size}\n` +
+      `🚀 Latest Idea: #${ideaCounter}\n\n` +
+      `*Keep the ideas coming!*`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('💡 Submit Idea', 'submit_idea'),
+        Markup.button.callback('📋 View Ideas', 'view_ideas')
+      ],
+      [
+        Markup.button.callback('🔙 Main Menu', 'main_menu')
+      ]
+    ]);
+
+    await ctx.editMessageText(statsText, { 
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup 
+    });
+  } catch (error) {
+    console.error('Error showing stats:', error);
+    await ctx.answerCbQuery('❌ Error loading statistics');
+  }
+});
+
+// ==================== IDEA SUBMISSION HANDLER ====================
 bot.on('text', async (ctx) => {
   if (ctx.session.waitingForIdea) {
     await handleIdeaSubmission(ctx, ctx.message.text);
@@ -111,6 +272,17 @@ async function handleIdeaSubmission(ctx, ideaText) {
   const userId = ctx.from.id;
   const username = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
   
+  // Validate idea length
+  if (ideaText.length < 5) {
+    await ctx.reply('❌ Idea is too short. Please write a meaningful idea.');
+    return;
+  }
+
+  if (ideaText.length > 1000) {
+    await ctx.reply('❌ Idea is too long. Please keep it under 1000 characters.');
+    return;
+  }
+
   try {
     const ideaId = `idea_${userId}_${Date.now()}`;
     
@@ -131,11 +303,17 @@ async function handleIdeaSubmission(ctx, ideaText) {
     
     ctx.session.waitingForIdea = false;
     
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('📋 View Ideas', 'view_ideas')],
+      [Markup.button.callback('🔙 Main Menu', 'main_menu')]
+    ]);
+
     await ctx.replyWithMarkdown(
       `✅ *Idea Submitted!*\n\n` +
       `Your idea has been received and sent for admin approval.\n\n` +
       `You'll get notified when it's approved and posted to the community channel.\n` +
-      `You'll also receive notifications when people comment on your idea!`
+      `You'll also receive notifications when people comment on your idea!`,
+      keyboard
     );
     
   } catch (error) {
@@ -144,7 +322,7 @@ async function handleIdeaSubmission(ctx, ideaText) {
   }
 }
 
-// ==================== ADMIN APPROVAL SYSTEM ====================
+// ==================== FIXED ADMIN APPROVAL SYSTEM ====================
 async function notifyAdminNewIdea(ideaId, ideaText, username, userId) {
   const adminIds = process.env.ADMIN_IDS?.split(',') || [];
   
@@ -176,7 +354,7 @@ async function notifyAdminNewIdea(ideaId, ideaText, username, userId) {
   }
 }
 
-// Admin approval handlers
+// Fixed admin approval handlers
 bot.action(/approve_idea_(.+)/, async (ctx) => {
   const ideaId = ctx.match[1];
   await approveIdea(ctx, ideaId);
@@ -227,7 +405,13 @@ async function approveIdea(ctx, ideaId) {
       `You'll get notified when someone comments!`
     );
 
-    await ctx.editMessageText(`✅ Idea #${ideaCounter} approved and posted to channel!`);
+    // Remove buttons from admin message and show confirmation
+    await ctx.editMessageText(
+      `✅ *Idea #${ideaCounter} Approved!*\n\n` +
+      `Idea has been posted to the channel and user has been notified.`,
+      { parse_mode: 'Markdown' }
+    );
+    
     await ctx.answerCbQuery('Idea approved!');
 
   } catch (error) {
@@ -237,10 +421,13 @@ async function approveIdea(ctx, ideaId) {
 }
 
 async function rejectIdea(ctx, ideaId) {
+  // Remove buttons and ask for reason
   await ctx.editMessageText(
-    `❌ Rejecting idea\n\nPlease send the rejection reason:`
+    `❌ *Rejecting Idea*\n\nPlease send the rejection reason:`,
+    { parse_mode: 'Markdown' }
   );
   ctx.session.rejectingIdea = ideaId;
+  await ctx.answerCbQuery();
 }
 
 async function handleIdeaRejection(ctx, reason) {
@@ -272,7 +459,7 @@ async function handleIdeaRejection(ctx, reason) {
   ctx.session.rejectingIdea = null;
 }
 
-// ==================== CHANNEL POSTING ====================
+// ==================== FIXED CHANNEL POSTING ====================
 async function postIdeaToChannel(idea, ideaNumber) {
   const channelId = process.env.CHANNEL_ID;
   
@@ -286,10 +473,16 @@ async function postIdeaToChannel(idea, ideaNumber) {
     ]
   ]);
 
-  return await bot.telegram.sendMessage(channelId, message, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup
-  });
+  try {
+    const channelMessage = await bot.telegram.sendMessage(channelId, message, {
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+    return channelMessage;
+  } catch (error) {
+    console.error('Error posting to channel:', error);
+    throw new Error('Failed to post to channel');
+  }
 }
 
 // ==================== COMMENT SYSTEM ====================
@@ -331,6 +524,17 @@ async function handleCommentSubmission(ctx, commentText) {
     return;
   }
 
+  // Validate comment length
+  if (commentText.length < 2) {
+    await ctx.reply('❌ Comment is too short.');
+    return;
+  }
+
+  if (commentText.length > 500) {
+    await ctx.reply('❌ Comment is too long. Please keep it under 500 characters.');
+    return;
+  }
+
   try {
     const commentId = `comment_${userId}_${Date.now()}`;
     
@@ -367,10 +571,16 @@ async function handleCommentSubmission(ctx, commentText) {
     ctx.session.waitingForComment = false;
     ctx.session.commentIdeaId = null;
 
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('📋 View Ideas', 'view_ideas')],
+      [Markup.button.callback('🔙 Main Menu', 'main_menu')]
+    ]);
+
     await ctx.replyWithMarkdown(
       `✅ *Comment Added!*\n\n` +
       `Your comment has been added to Idea #${idea.ideaNumber}.\n\n` +
-      `💬 Total comments: ${newCount}`
+      `💬 Total comments: ${newCount}`,
+      keyboard
     );
 
   } catch (error) {
@@ -382,13 +592,18 @@ async function handleCommentSubmission(ctx, commentText) {
 // Notify idea owner about new comment
 async function notifyIdeaOwnerNewComment(idea, commentText, totalComments) {
   try {
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.url('💬 View in Channel', `https://t.me/${process.env.CHANNEL_ID}/${idea.channelMessageId}`)]
+    ]);
+
     await bot.telegram.sendMessage(
       idea.userId,
       `💬 *New Comment on Your Idea!*\n\n` +
       `Someone commented on your Idea #${idea.ideaNumber}:\n\n` +
       `💡 *Your Idea:*\n${idea.text}\n\n` +
       `💬 *New Comment:*\n"${commentText}"\n\n` +
-      `📊 Total comments: ${totalComments}`
+      `📊 Total comments: ${totalComments}`,
+      { reply_markup: keyboard.reply_markup }
     );
   } catch (error) {
     console.error('Error notifying idea owner:', error);
@@ -420,40 +635,6 @@ async function updateChannelCommentCount(ideaId, newCount) {
   }
 }
 
-// ==================== VIEW IDEAS COMMAND ====================
-bot.command('ideas', async (ctx) => {
-  try {
-    const ideasSnapshot = await db.collection('ideas')
-      .where('status', '==', 'approved')
-      .orderBy('ideaNumber', 'desc')
-      .limit(10)
-      .get();
-
-    if (ideasSnapshot.empty) {
-      await ctx.reply('📝 No ideas have been posted yet. Be the first to submit one using /submit');
-      return;
-    }
-
-    let ideasText = `📋 *Recent Community Ideas*\n\n`;
-    
-    ideasSnapshot.forEach((doc, index) => {
-      const idea = doc.data();
-      ideasText += `*${idea.ideaNumber}. 💡 Idea*\n`;
-      ideasText += `${idea.text}\n`;
-      ideasText += `💬 ${idea.commentCount || 0} comments\n`;
-      ideasText += `📅 ${new Date(idea.approvedAt).toLocaleDateString()}\n\n`;
-    });
-
-    ideasText += `💡 Submit your own idea using /submit`;
-
-    await ctx.replyWithMarkdown(ideasText);
-
-  } catch (error) {
-    console.error('Error fetching ideas:', error);
-    await ctx.reply('❌ Error loading ideas. Please try again.');
-  }
-});
-
 // ==================== ADMIN MESSAGE HANDLER ====================
 bot.action(/message_user_(.+)/, async (ctx) => {
   const userId = ctx.match[1];
@@ -461,6 +642,7 @@ bot.action(/message_user_(.+)/, async (ctx) => {
     `📩 Messaging user ${userId}\n\nPlease type your message:`
   );
   ctx.session.messagingUser = userId;
+  await ctx.answerCbQuery();
 });
 
 async function handleAdminMessage(ctx, message) {
@@ -498,10 +680,9 @@ module.exports = async (req, res) => {
 
 // ==================== LOCAL DEVELOPMENT ====================
 if (process.env.NODE_ENV === 'development') {
-  // Initialize counter when bot starts
   initializeIdeaCounter().then(() => {
     bot.launch().then(() => {
-      console.log('🚀 Community Ideas Bot started in development mode');
+      console.log('🚀 Enhanced Community Ideas Bot started in development mode');
     });
   });
   
