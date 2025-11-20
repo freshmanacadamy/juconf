@@ -1,7 +1,7 @@
 {
-  "name": "community-ideas-bot",
+  "name": "ju-confession-bot",
   "version": "1.0.0",
-  "description": "Community Ideas Bot with Comment System",
+  "description": "JU Confession Bot with complete features",
   "main": "api/bot.js",
   "scripts": {
     "dev": "nodemon api/bot.js",
